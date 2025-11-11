@@ -1,0 +1,62 @@
+# ----------------------------------------------------------------------
+# 1. Project-Specific Files (DO NOT commit user/local data)
+# ----------------------------------------------------------------------
+
+# User Progress, State, and Logs (These change constantly)
+*progress.json
+user_states/
+*.log
+
+# Local Databases (These often contain credentials or frequently changing data)
+*.db
+auth_db.db
+users.db
+
+# Machine Learning Models
+*.pkl
+knn_model.pkl
+decision_tree_model.pkl
+
+# Streamlit Configuration and Secrets (YAML Focus - CRUCIAL to ignore!)
+# Prevents exposing passwords, API keys, and connection strings
+credentials.yaml
+secrets.yaml
+*.local.yaml
+*.secret.yaml
+.streamlit/
+
+
+# ----------------------------------------------------------------------
+# 2. Python Environment and System Files
+# ----------------------------------------------------------------------
+
+# Virtual Environment Folders
+venv/
+.venv/
+env/
+
+# Byte-compiled / optimized / internal files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+
+# ----------------------------------------------------------------------
+# 3. IDE and Operating System Files
+# ----------------------------------------------------------------------
+
+# VS Code
+.vscode/
+
+# Environment Variables (Sensitive config data)
+.env
+
+# Operating System Files
+.DS_Store
+Thumbs.db
