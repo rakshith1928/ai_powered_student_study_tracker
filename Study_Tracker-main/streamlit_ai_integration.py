@@ -1,4 +1,5 @@
-# ai_model.py
+# ai_model.py (SMART AI SYSTEM)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,14 +8,63 @@ from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
+from sklearn.ensemble import IsolationForest
 import joblib
 import datetime
 from pathlib import Path
 
 BASE_DIR = Path.cwd()
 
+# -------- SMALL HELPER FUNCTIONS -------- #
+
+def compute_slope(series):
+    """Return slope of last N values."""
+    if len(series) < 3:
+        return 0
+    x = np.arange(len(series))
+    return np.polyfit(x, series, 1)[0]
+
+def consistency_score(series):
+    """Lower std → more consistency."""
+    return round(1 / (1 + np.std(series)), 3)
+
+def fatigue_detector(hours_list):
+    """Detect decreasing trend over last 5 sessions."""
+    if len(hours_list) < 5:
+        return False
+    last5 = hours_list[-5:]
+    return compute_slope(last5) < -0.15
+
+def generate_ai_advice(sub, avg, slope, cons, anomalies):
+    """AI-based text recommendations."""
+    advice = []
+
+    if slope > 0.1:
+        advice.append("📈 You are improving steadily. Keep the momentum!")
+    elif slope < -0.1:
+        advice.append("📉 Your recent hours are decreasing. Revisit your schedule.")
+
+    if cons < 0.4:
+        advice.append("⚠️ Your study pattern is inconsistent. Fix a routine time.")
+    else:
+        advice.append("👌 Your consistency is good.")
+
+    if anomalies > 0:
+        advice.append("❗Some study sessions were significantly below your usual level.")
+
+    if avg < 1.5:
+        advice.append("⏫ Increase at least 30–45 minutes more per session.")
+    elif avg > 3:
+        advice.append("💪 Great discipline. Maintain the current effort.")
+
+    return " ".join(advice)
+
+
+# -------- MAIN FUNCTION -------- #
+
 def run_ai_insights(df_user, username):
-    st.header("🤖 AI Insights — Automated Analysis + Trainable View")
+
+    st.header("🤖 Smart AI Insights — Deep Study Analysis")
 
     if df_user.empty:
         st.warning("No study history yet.")
@@ -23,131 +73,122 @@ def run_ai_insights(df_user, username):
     st.write("Recent entries")
     st.dataframe(df_user.tail(30))
 
-    # Feature engineering
+    # -------- CLEAN FEATURE ENGINEERING -------- #
+
     df = df_user.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["subject","date"])
     df["dow"] = df["date"].dt.dayofweek
+
     df["cumulative_subject_hours"] = df.groupby("subject")["hours"].cumsum()
     df["prev_hours"] = df.groupby("subject")["hours"].shift(1).fillna(df["hours"].median())
     df["avg_hours_subject"] = df.groupby("subject")["hours"].transform("mean")
+
     le = LabelEncoder()
     df["subject_enc"] = le.fit_transform(df["subject"])
 
-    # AUTOMATIC regression predictions
-    st.subheader("Auto predictions (no action required)")
+    # -------- Isolation Forest for Outliers -------- #
+    iso = IsolationForest(contamination=0.08, random_state=42)
+    df["anomaly"] = iso.fit_predict(df[["hours"]])
+    df["is_low_outlier"] = (df["anomaly"] == -1).astype(int)
+
+    # -------- REGRESSION MODELS -------- #
+
+    st.subheader("📊 ML Predictions")
+
     feature_cols = ["subject_enc","dow","prev_hours","cumulative_subject_hours"]
     Xr = df[feature_cols].fillna(0)
     yr = df["hours"]
+
+    tree_reg = None
+    knn_reg = None
+
     try:
         Xtr, Xte, ytr, yte = train_test_split(Xr, yr, test_size=0.25, random_state=42)
+
         tree_reg = DecisionTreeRegressor(max_depth=6, random_state=42)
         knn_reg = KNeighborsRegressor(n_neighbors=3)
+
         tree_reg.fit(Xtr, ytr)
         knn_reg.fit(Xtr, ytr)
+
         preds_tree = tree_reg.predict(Xte)
         preds_knn = knn_reg.predict(Xte)
-        st.write("Regression metrics:")
-        st.write("Tree R²:", round(r2_score(yte, preds_tree),2), " MSE:", round(mean_squared_error(yte, preds_tree),2))
-        st.write("KNN R²:", round(r2_score(yte, preds_knn),2), " MSE:", round(mean_squared_error(yte, preds_knn),2))
+
+        st.write("DecisionTree → R²:", round(r2_score(yte, preds_tree),2),
+                 "| MSE:", round(mean_squared_error(yte, preds_tree),2))
+
+        st.write("KNN → R²:", round(r2_score(yte, preds_knn),2),
+                 "| MSE:", round(mean_squared_error(yte, preds_knn),2))
+
     except Exception as e:
-        st.info("Automatic regression could not run: " + str(e))
-        tree_reg = None
-        knn_reg = None
+        st.info("Regression model skipped: " + str(e))
 
-    # Per-subject summary & recommendations
-    st.subheader("Per-subject summary & quick recommendations")
-    subj_list = df["subject"].unique()
-    summary = []
+    # -------- SMART PER-SUBJECT INSIGHTS -------- #
 
-    for s in subj_list:
-        sub_df = df[df["subject"] == s]
+    st.subheader("🧠 Smart Subject Insights")
+
+    smart_rows = []
+
+    for sub in df["subject"].unique():
+
+        sub_df = df[df["subject"] == sub]
+        hours = list(sub_df["hours"])
+
+        avg = np.mean(hours)
+        slope = compute_slope(hours[-7:])
+        cons = consistency_score(hours)
+        anomalies = sub_df["is_low_outlier"].sum()
+
         last = sub_df.iloc[-1:]
-        feat = last[["subject_enc", "dow", "prev_hours", "cumulative_subject_hours"]].fillna(0).values
+        feat = last[["subject_enc","dow","prev_hours","cumulative_subject_hours"]].values
 
-        avg_hours = sub_df["hours"].mean()
-        pred_tree_val = avg_hours
-        pred_knn_val = avg_hours
-
-        if tree_reg is not None:
+        pred = None
+        if tree_reg:
             try:
-                pred_tree_val = float(tree_reg.predict(feat)[0])
-            except Exception:
-                pred_tree_val = avg_hours
-        if knn_reg is not None:
-            try:
-                pred_knn_val = float(knn_reg.predict(feat)[0])
-            except Exception:
-                pred_knn_val = avg_hours
+                pred = float(tree_reg.predict(feat)[0])
+            except:
+                pred = avg
 
-        rec = "Maintain"
-        if avg_hours < sub_df["hours"].median():
-            rec = "Increase time slightly"
-        elif avg_hours > sub_df["hours"].median():
-            rec = "Doing well"
+        advice = generate_ai_advice(sub, avg, slope, cons, anomalies)
 
-        summary.append({
-            "subject": s,
-            "avg_hours": round(float(avg_hours), 2),
-            "pred_tree": round(float(pred_tree_val), 2),
-            "pred_knn": round(float(pred_knn_val), 2),
-            "recommendation": rec
+        smart_rows.append({
+            "Subject": sub,
+            "Avg Hours": round(avg,2),
+            "Trend (slope)": round(slope,3),
+            "Consistency Score": cons,
+            "Predicted Next Session": round(pred,2) if pred else "—",
+            "Outliers": anomalies,
+            "AI Recommendation": advice
         })
 
-    st.dataframe(pd.DataFrame(summary))
+    st.dataframe(pd.DataFrame(smart_rows))
 
-    # Optional Train view
+    # -------- AI 7-DAY STUDY PLAN -------- #
+
+    st.subheader("📅 Your AI-Generated 7-Day Study Plan")
+
+    plan = []
+    now = datetime.date.today()
+
+    for i in range(7):
+        date = now + datetime.timedelta(days=i)
+        best_sub = df.groupby("subject")["hours"].mean().sort_values(ascending=False).index[i % len(df["subject"].unique())]
+        plan.append({"Date": date, "Suggested Subject": best_sub})
+
+    st.table(pd.DataFrame(plan))
+
+    # -------- MODEL SAVING -------- #
+
     st.markdown("---")
-    train_expand = st.expander("🔧 Train AI models and view details (click to expand)")
-    with train_expand:
-        st.write("This view lets you train small ML models explicitly and inspect metrics.")
-        pass_threshold = st.slider("Pass threshold (avg hours)", 1.0, 10.0, float(df["avg_hours_subject"].median()), step=0.5)
-        subj_agg = df.groupby("subject").agg({
-            "avg_hours_subject":"mean",
-            "cumulative_subject_hours":"max",
-            "prev_hours":"mean",
-            "subject_enc":"first"
-        }).reset_index()
-        subj_agg["label_pass"] = (subj_agg["avg_hours_subject"] >= pass_threshold).astype(int)
-        if len(subj_agg) >= 3:
-            Xc = subj_agg[["subject_enc","avg_hours_subject","cumulative_subject_hours","prev_hours"]]
-            yc = subj_agg["label_pass"]
-            clf_tree = DecisionTreeClassifier(max_depth=4, random_state=42)
-            clf_knn = KNeighborsClassifier(n_neighbors=3)
-            clf_tree.fit(Xc, yc)
-            clf_knn.fit(Xc, yc)
-            preds_tree = clf_tree.predict(Xc)
-            st.write("Pass/Fail training (on subject-aggregate rows):")
-            st.write("DecisionTree accuracy (train):", round(accuracy_score(yc, preds_tree),2))
-            st.table(subj_agg[["subject","avg_hours_subject","label_pass"]])
-        else:
-            st.info("Not enough distinct subjects to train pass/fail classifier.")
+    st.subheader("💾 Save Models")
 
-        miss_threshold = st.slider("Miss threshold (hours)", 0.25, 3.0, 1.0, step=0.25)
-        sess = df.copy()
-        sess["label_miss"] = (sess["hours"] < miss_threshold).astype(int)
-        feat_cols = ["subject_enc","dow","prev_hours","avg_hours_subject"]
-        Xs = sess[feat_cols].fillna(0)
-        ys = sess["label_miss"]
-        if len(sess) >= 10:
-            Xtr, Xte, ytr, yte = train_test_split(Xs, ys, test_size=0.25, random_state=42, stratify=ys if len(ys.unique())>1 else None)
-            miss_tree = DecisionTreeClassifier(max_depth=5, random_state=42)
-            miss_tree.fit(Xtr, ytr)
-            pred_mt = miss_tree.predict(Xte)
-            st.write("Miss predictor accuracy:", round(accuracy_score(yte, pred_mt),2))
-            sess["pred_miss"] = miss_tree.predict(Xs)
-            risky = sess[sess["pred_miss"]==1][["date","subject","hours","notes"]].head(10)
-            if not risky.empty:
-                st.table(risky)
-        else:
-            st.info("Not enough rows to train miss predictor reliably (need ~10+).")
-
-        if st.button("Save current trained models"):
-            try:
-                if 'clf_tree' in locals():
-                    joblib.dump(clf_tree, BASE_DIR / f"pass_tree_{username}.joblib")
-                if 'miss_tree' in locals():
-                    joblib.dump(miss_tree, BASE_DIR / f"miss_tree_{username}.joblib")
-                st.success("Saved models.")
-            except Exception as e:
-                st.error("Error saving models: " + str(e))
+    if st.button("Save trained models"):
+        try:
+            if tree_reg:
+                joblib.dump(tree_reg, BASE_DIR / f"{username}_tree_reg.joblib")
+            if knn_reg:
+                joblib.dump(knn_reg, BASE_DIR / f"{username}_knn_reg.joblib")
+            st.success("Models saved.")
+        except Exception as e:
+            st.error("Could not save models: " + str(e))
